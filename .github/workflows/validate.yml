@@ -1,0 +1,20 @@
+name: Validate data
+
+on:
+  push:
+    paths: ['data/**', 'tools/**', 'index.html', 'app.js']
+  pull_request:
+    paths: ['data/**', 'tools/**', 'index.html', 'app.js']
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate data files
+        run: node tools/validate.js
+      - name: Check app.js parses
+        run: node --check app.js
