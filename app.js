@@ -244,10 +244,14 @@
     document.title = 'Oxalate Guide';
   }
   function parseHash() {
-    const h = decodeURIComponent(location.hash.replace(/^#/, '')) || '/';
-    const [path, qs] = h.split('?');
-    const params = {}; if (qs) for (const kv of qs.split('&')) { const [k, v] = kv.split('='); params[decodeURIComponent(k)] = decodeURIComponent(v || ''); }
-    const parts = path.replace(/^\/+/, '').split('/');
+    // Split before decoding so that encoded '&', '?' and '/' inside values (e.g. "Nuts & Seeds") survive.
+    const raw = location.hash.replace(/^#/, '') || '/';
+    const qi = raw.indexOf('?');
+    const rawPath = qi >= 0 ? raw.slice(0, qi) : raw; const qs = qi >= 0 ? raw.slice(qi + 1) : '';
+    const dec = (x) => { try { return decodeURIComponent(x); } catch (e) { return x; } };
+    const params = {}; if (qs) for (const kv of qs.split('&')) { const i = kv.indexOf('='); const k = i >= 0 ? kv.slice(0, i) : kv; const v = i >= 0 ? kv.slice(i + 1) : ''; params[dec(k)] = dec(v.replace(/\+/g, ' ')); }
+    const parts = rawPath.replace(/^\/+/, '').split('/').map(dec);
+    const path = dec(rawPath);
     return { path, parts, params };
   }
   function route() {
