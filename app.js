@@ -304,11 +304,13 @@
     $('#view-foods').innerHTML = `
       <h1>Foods</h1>
       <p class="subtitle">${FOODS.length} curated vegan foods with notes, swaps and nutrition. The full ${HARV.length}-row Harvard table is included in search.</p>
-      <div class="chips scroll">${link(mk('cat', ''), 'chip' + (!cat ? ' active' : ''), 'All')}${CATEGORIES.map((c) => link(mk('cat', c), 'chip' + (cat === c ? ' active' : ''), esc(c))).join('')}</div>
-      <div class="filter-row"><span class="label">Risk</span>${['all', 'LOW', 'MODERATE', 'HIGH', 'VERY HIGH'].map((r) => link(mk('risk', r === 'all' ? '' : r), 'chip' + (risk === r ? ' active' : ''), r === 'all' ? 'All' : riskLabel(r))).join('')}
-        <span class="right"><label class="label" for="sortSel">Sort</label> <select id="sortSel" class="sort-select"><option value="oxalate"${sort === 'oxalate' ? ' selected' : ''}>Oxalate, low to high</option><option value="oxalate-desc"${sort === 'oxalate-desc' ? ' selected' : ''}>Oxalate, high to low</option><option value="name"${sort === 'name' ? ' selected' : ''}>Name</option><option value="calcium"${sort === 'calcium' ? ' selected' : ''}>Calcium per serving</option></select></span></div>
-      <div class="count">${list.length} foods</div>
-      <div class="food-list mt">${list.map((f) => foodRow(f)).join('') || '<div class="empty">No foods match these filters.</div>'}</div>
+      <div class="filter-group"><div class="filter-title">Category</div>
+        <div class="chips">${link(mk('cat', ''), 'chip' + (!cat ? ' active' : ''), 'All')}${CATEGORIES.map((c) => link(mk('cat', c), 'chip' + (cat === c ? ' active' : ''), esc(c))).join('')}</div></div>
+      <div class="filter-group"><div class="filter-title">Risk level</div>
+        <div class="chips">${['all', 'LOW', 'MODERATE', 'HIGH', 'VERY HIGH'].map((r) => link(mk('risk', r === 'all' ? '' : r), 'chip' + (risk === r ? ' active' : ''), r === 'all' ? 'All' : riskLabel(r))).join('')}</div></div>
+      <div class="list-bar"><span class="count">${list.length} foods</span>
+        <span class="sort"><label for="sortSel">Sort</label> <select id="sortSel" class="sort-select"><option value="oxalate"${sort === 'oxalate' ? ' selected' : ''}>Oxalate, low to high</option><option value="oxalate-desc"${sort === 'oxalate-desc' ? ' selected' : ''}>Oxalate, high to low</option><option value="name"${sort === 'name' ? ' selected' : ''}>Name</option><option value="calcium"${sort === 'calcium' ? ' selected' : ''}>Calcium per serving</option></select></span></div>
+      <div class="food-list">${list.map((f) => foodRow(f)).join('') || '<div class="empty">No foods match these filters.</div>'}</div>
       ${list.some((f) => f.starred) ? '<p class="note mt">★ Classification changed with the Harvard 2023 measurements or the Sept 2026 research check.</p>' : ''}`;
     $('#sortSel').addEventListener('change', (e) => { location.hash = mk('sort', e.target.value); });
   }
