@@ -18,6 +18,12 @@ app; everything under `data/` is content.
 - Record every value change in `data/changelog.js` (newest release first; add a release object with
   `date`, `title`, `summary`, `changes: [{id, field, before, after, why}]`).
 
+## Intake tracker
+
+The Intake view (`renderIntake` in `app.js`) stores per-day entries in localStorage under
+`oxg.intake` and syncs to a user-chosen **private** repository via the GitHub contents API
+(settings under `oxg.intake.gh`). Never write intake data into this public repository.
+
 ## Data schema
 
 ### `data/foods.js` (curated list, ~250 vegan foods)

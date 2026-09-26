@@ -236,7 +236,7 @@
   }
 
   // ------------------------------------------------------------------ views & routing
-  const VIEWS = ['home', 'foods', 'search', 'detail', 'recipes', 'builder', 'guide', 'sources'];
+  const VIEWS = ['home', 'foods', 'search', 'detail', 'recipes', 'builder', 'intake', 'guide', 'sources'];
   let current = { name: null, path: '' };
   function show(name, navKey) {
     for (const v of VIEWS) $('#view-' + v).classList.toggle('active', v === name);
@@ -271,6 +271,7 @@
       else if (head === 'recipe') renderRecipe(arg), show('detail', 'recipes');
       else if (head === 'builder') renderBuilder(arg), show('builder', 'builder');
       else if (head === 'guide') show('guide', 'guide');
+      else if (head === 'intake') renderIntake(), show('intake', 'intake');
       else if (head === 'sources') renderSources(), show('sources', 'sources');
       else { location.hash = '#/'; return; }
     } catch (e) { console.error(e); $('#view-detail').innerHTML = `<div class="empty">Something went wrong rendering this page.<br><code>${esc(e.message)}</code></div>`; show('detail', null); }
@@ -724,6 +725,221 @@
       B = blankRecipe(); saveDraft(); paintBuilder();
     } catch (e) { console.error(e); alert('Publish failed: ' + e.message + '\n\nYou can still use Copy JSON and paste it into data/recipes.js on GitHub.'); }
     finally { btn.disabled = false; btn.textContent = 'Publish to GitHub'; }
+  }
+
+  // ------------------------------------------------------------------ daily intake tracker
+  const INTAKE_KEY = 'oxg.intake';
+  const INTAKE_GH_KEY = 'oxg.intake.gh';
+  const METRICS = [
+    { k: 'calcium', label: 'Calcium', unit: 'mg', step: 10, kind: 'range', hint: 'from food, with meals' },
+    { k: 'water', label: 'Fluids', unit: 'L', step: 0.1, kind: 'min', hint: 'all fluids, water first' },
+    { k: 'sodium', label: 'Sodium', unit: 'mg', step: 50, kind: 'max', hint: 'keep under target' },
+    { k: 'oxalate', label: 'Oxalate', unit: 'mg', step: 5, kind: 'max', hint: 'optional; recipe pages give per-serving values' },
+  ];
+  const DEFAULT_TARGETS = { calcium: [1000, 1200], water: [2.5, 3], sodium: 2300, oxalate: 100 };
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const isoDate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const todayIso = () => isoDate(new Date());
+  const fromIso = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  let I = null; let intakeUI = { month: null, selected: null, inited: false };
+
+  function loadIntake() {
+    const raw = lsGet(INTAKE_KEY, null) || {};
+    I = { targets: Object.assign({}, DEFAULT_TARGETS, raw.targets || {}), days: raw.days || {}, lastSync: raw.lastSync || null };
+  }
+  function saveIntake() { lsSet(INTAKE_KEY, I); }
+  const num = (v) => (v === '' || v == null || isNaN(+v) ? null : +v);
+
+  // Status of one metric on one day: 'met' | 'near' | 'off' | 'none'
+  function metricStatus(k, v) {
+    if (v == null) return 'none';
+    const t = I.targets[k];
+    if (k === 'calcium' || k === 'water') { const [lo, hi] = t; if (v >= lo && (k === 'water' || v <= hi * 1.25)) return 'met'; if (v >= lo * 0.8) return 'near'; return 'off'; }
+    if (v <= t) return 'met'; if (v <= t * 1.15) return 'near'; return 'off';
+  }
+  function dayScore(day) {
+    if (!day) return null; let met = 0, n = 0;
+    for (const m of METRICS) { const v = day[m.k]; if (v == null) continue; n++; const s = metricStatus(m.k, v); met += s === 'met' ? 1 : s === 'near' ? 0.5 : 0; }
+    return n ? met / n : null;
+  }
+  function average(keys, k) { const vals = keys.map((d) => I.days[d] && I.days[d][k]).filter((v) => v != null); return vals.length ? { avg: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length } : null; }
+  function targetText(k) { const t = I.targets[k]; return Array.isArray(t) ? `${t[0]}–${t[1]}` : (k === 'sodium' || k === 'oxalate' ? `under ${t}` : String(t)); }
+
+  function renderIntake() {
+    const v = $('#view-intake');
+    if (!intakeUI.inited) {
+      loadIntake();
+      const t = new Date(); intakeUI.month = new Date(t.getFullYear(), t.getMonth(), 1); intakeUI.selected = todayIso(); intakeUI.inited = true;
+      v.innerHTML = `
+        <div class="row"><h1 class="grow">Daily intake</h1><a class="btn sm" href="#/guide">Why these targets?</a></div>
+        <p class="subtitle">Log calcium, fluids, sodium and (optionally) oxalate for each day. Entries are stored in this browser; use Sync to keep a copy in a private GitHub repository and share it between devices.</p>
+        <div class="intake-grid">
+          <div class="stack">
+            <div class="card" id="i-cal"></div>
+            <div class="card" id="i-trend"></div>
+          </div>
+          <div class="stack intake-side">
+            <div class="card" id="i-editor"></div>
+            <div class="card" id="i-stats"></div>
+            <div class="card">
+              <details><summary>Targets</summary><div class="body" id="i-targets"></div></details>
+              <details class="mt"><summary>Sync, backup and restore</summary><div class="body" id="i-sync"></div></details>
+            </div>
+          </div>
+        </div>`;
+      bindIntake(v);
+    }
+    paintIntake();
+  }
+  function paintIntake() { paintCalendar(); paintEditor(); paintStats(); paintTrend(); paintTargets(); paintSync(); }
+
+  function paintCalendar() {
+    const m = intakeUI.month; const first = new Date(m.getFullYear(), m.getMonth(), 1); const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+    const lead = (first.getDay() + 6) % 7; // Monday first
+    const today = todayIso();
+    let cells = '';
+    for (let i = 0; i < lead; i++) cells += '<div class="cal-cell empty"></div>';
+    for (let d = 1; d <= days; d++) {
+      const iso = `${m.getFullYear()}-${pad2(m.getMonth() + 1)}-${pad2(d)}`; const day = I.days[iso]; const sc = dayScore(day);
+      const cls = sc == null ? 'none' : sc >= 0.99 ? 'met' : sc >= 0.5 ? 'near' : 'off';
+      const dots = day ? METRICS.map((mm) => `<i class="dot ${metricStatus(mm.k, day[mm.k])}" title="${mm.label}"></i>`).join('') : '';
+      cells += `<button type="button" class="cal-cell ${cls}${iso === intakeUI.selected ? ' sel' : ''}${iso === today ? ' today' : ''}${iso > today ? ' future' : ''}" data-day="${iso}"><span class="d">${d}</span><span class="dots">${dots}</span></button>`;
+    }
+    $('#i-cal').innerHTML = `
+      <div class="row cal-head"><button class="btn sm" type="button" data-cal="-1" aria-label="Previous month">&larr;</button><h3 class="grow center" style="margin:0">${MONTHS[m.getMonth()]} ${m.getFullYear()}</h3><button class="btn sm" type="button" data-cal="1" aria-label="Next month">&rarr;</button><button class="btn sm" type="button" data-cal="0">Today</button></div>
+      <div class="cal-grid cal-dow">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => `<div>${d}</div>`).join('')}</div>
+      <div class="cal-grid">${cells}</div>
+      <div class="legend mt"><span><i class="sw met"></i>targets met</span><span><i class="sw near"></i>close</span><span><i class="sw off"></i>off target</span><span><i class="sw none"></i>not logged</span><span class="muted">Dots: calcium · fluids · sodium · oxalate</span></div>`;
+  }
+  function paintEditor() {
+    const iso = intakeUI.selected; const day = I.days[iso] || {}; const d = fromIso(iso);
+    const nice = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    $('#i-editor').innerHTML = `
+      <div class="row"><h3 class="grow" style="margin:0">${esc(nice)}</h3><input type="date" id="i-date" value="${iso}" max="${todayIso()}" aria-label="Pick a date"></div>
+      <div class="fields mt">${METRICS.map((m) => { const val = day[m.k]; const st = metricStatus(m.k, val); return `
+        <div class="field"><label for="i-${m.k}">${m.label} (${m.unit}) <span class="muted" style="text-transform:none;font-weight:500">target ${targetText(m.k)}</span></label>
+        <input id="i-${m.k}" data-m="${m.k}" type="number" min="0" step="${m.step}" inputmode="decimal" value="${val == null ? '' : esc(val)}" placeholder="${m.hint}" class="st-${st}"></div>`; }).join('')}
+        <div class="field" style="grid-column:1/-1"><label for="i-notes">Notes</label><input id="i-notes" data-m="notes" value="${esc(day.notes || '')}" placeholder="e.g. tofu stir-fry, 2 coffees, salty takeout"></div>
+      </div>
+      <div class="row mt"><button class="btn primary" type="button" data-act="i-save">Save day</button>${I.days[iso] ? '<button class="btn danger" type="button" data-act="i-delete">Delete entry</button>' : ''}<span class="tiny muted right">${I.days[iso] && I.days[iso].updated ? 'saved ' + esc(new Date(I.days[iso].updated).toLocaleString()) : 'not saved yet'}</span></div>`;
+  }
+  function paintStats() {
+    const keys = Object.keys(I.days).sort(); const today = todayIso();
+    const last = (n) => { const out = []; for (let i = 0; i < n; i++) { const d = new Date(); d.setDate(d.getDate() - i); out.push(isoDate(d)); } return out; };
+    const wk = last(7), mo = last(30);
+    const m = intakeUI.month; const monthKeys = keys.filter((k) => k.startsWith(`${m.getFullYear()}-${pad2(m.getMonth() + 1)}`));
+    const row = (label, ks) => `<tr><th>${label}</th>${METRICS.map((mm) => { const a = average(ks, mm.k); return `<td class="num">${a ? `<span class="st-${metricStatus(mm.k, a.avg)}">${fmt(a.avg, mm.k === 'water' ? 1 : 0)}</span> <span class="tiny muted">${a.n}d</span>` : '<span class="muted">–</span>'}</td>`; }).join('')}</tr>`;
+    let streak = 0; for (let i = 0; ; i++) { const d = new Date(); d.setDate(d.getDate() - i); const k = isoDate(d); if (I.days[k] && dayScore(I.days[k]) >= 0.99) streak++; else if (i === 0 && !I.days[k]) continue; else break; if (i > 400) break; }
+    $('#i-stats').innerHTML = `<h3>Averages</h3><div class="tbl-wrap"><table class="tbl"><tr><th></th>${METRICS.map((mm) => `<th class="num">${mm.label}<br><span class="tiny muted">${mm.unit}</span></th>`).join('')}</tr>${row('Last 7 days', wk)}${row('Last 30 days', mo)}${row(MONTHS[m.getMonth()], monthKeys)}</table></div>
+      <p class="note mt">${keys.length} days logged${keys.length ? `, first ${esc(keys[0])}` : ''}. ${streak ? `Current streak with all targets met: ${streak} day${streak === 1 ? '' : 's'}.` : ''} Today is ${today}.</p>`;
+  }
+  function paintTrend() {
+    const n = 30; const days = []; for (let i = n - 1; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(isoDate(d)); }
+    const W = 600, H = 90, padL = 34, padB = 16, bw = (W - padL - 4) / n;
+    const charts = METRICS.map((m) => {
+      const vals = days.map((k) => (I.days[k] ? I.days[k][m.k] : null));
+      const t = I.targets[m.k]; const tHi = Array.isArray(t) ? t[1] : t; const tLo = Array.isArray(t) ? t[0] : null;
+      const max = Math.max(tHi * 1.3, ...vals.filter((x) => x != null), 1);
+      const y = (v) => H - padB - (v / max) * (H - padB - 6);
+      const bars = vals.map((v, i) => { if (v == null) return ''; const x = padL + i * bw + 1; const h = Math.max(2, (H - padB) - y(v)); const st = metricStatus(m.k, v);
+        return `<rect class="bar ${st}" x="${x.toFixed(1)}" y="${y(v).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>${days[i]}: ${fmt(v, m.k === 'water' ? 1 : 0)} ${m.unit}</title></rect>`; }).join('');
+      const band = tLo != null ? `<rect class="band" x="${padL}" y="${y(tHi).toFixed(1)}" width="${W - padL - 4}" height="${(y(tLo) - y(tHi)).toFixed(1)}"/>` : `<line class="target" x1="${padL}" x2="${W - 4}" y1="${y(tHi).toFixed(1)}" y2="${y(tHi).toFixed(1)}"/>`;
+      const logged = vals.filter((x) => x != null).length;
+      return `<div class="trend"><div class="row"><b>${m.label}</b><span class="tiny muted">${m.unit} · target ${targetText(m.k)} · ${logged}/${n} days</span></div>
+        <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${m.label} over the last ${n} days" preserveAspectRatio="none">
+          <line class="axis" x1="${padL}" x2="${W - 4}" y1="${H - padB}" y2="${H - padB}"/>
+          <text class="ax" x="${padL - 4}" y="${y(tHi) + 4}" text-anchor="end">${tHi}</text><text class="ax" x="${padL - 4}" y="${H - padB}" text-anchor="end">0</text>
+          ${band}${bars}
+          <text class="ax" x="${padL}" y="${H - 3}">${days[0].slice(5)}</text><text class="ax" x="${W - 4}" y="${H - 3}" text-anchor="end">${days[n - 1].slice(5)}</text>
+        </svg></div>`;
+    }).join('');
+    $('#i-trend').innerHTML = `<h3>Last 30 days</h3><p class="note">Shaded band or line marks the target. Hover a bar for the value.</p>${charts}`;
+  }
+  function paintTargets() {
+    $('#i-targets').innerHTML = `<p class="note">Defaults follow the guide: calcium 1,000–1,200 mg with meals, fluids 2.5–3 L, sodium under 2,300 mg, oxalate under 100 mg (only relevant if a 24-hour urine showed high oxalate).</p>
+      <div class="fields mt">
+        <div class="field"><label>Calcium min (mg)</label><input data-t="calcium.0" type="number" value="${I.targets.calcium[0]}"></div>
+        <div class="field"><label>Calcium max (mg)</label><input data-t="calcium.1" type="number" value="${I.targets.calcium[1]}"></div>
+        <div class="field"><label>Fluids min (L)</label><input data-t="water.0" type="number" step="0.1" value="${I.targets.water[0]}"></div>
+        <div class="field"><label>Fluids goal (L)</label><input data-t="water.1" type="number" step="0.1" value="${I.targets.water[1]}"></div>
+        <div class="field"><label>Sodium max (mg)</label><input data-t="sodium" type="number" value="${I.targets.sodium}"></div>
+        <div class="field"><label>Oxalate max (mg)</label><input data-t="oxalate" type="number" value="${I.targets.oxalate}"></div>
+      </div>
+      <div class="row mt"><button class="btn sm" type="button" data-act="i-targets-save">Save targets</button><button class="btn sm" type="button" data-act="i-targets-reset">Reset to defaults</button></div>`;
+  }
+  function paintSync() {
+    const gh = lsGet(INTAKE_GH_KEY, { owner: 'goodkidneys', repo: '', branch: 'main', path: 'intake.json', token: '' });
+    $('#i-sync').innerHTML = `
+      <p class="note">Entries stay in this browser. To keep them across devices, create a <b>private</b> GitHub repository (for example <code>oxalates-private</code>, empty is fine) and a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> limited to that repository with <b>Contents: Read and write</b>. Sync merges both sides day by day (newest edit wins) and never touches the public site repository.</p>
+      <div class="fields mt">
+        <div class="field"><label for="ig-owner">Owner</label><input id="ig-owner" value="${esc(gh.owner)}"></div>
+        <div class="field"><label for="ig-repo">Private repository</label><input id="ig-repo" value="${esc(gh.repo)}" placeholder="oxalates-private"></div>
+        <div class="field"><label for="ig-branch">Branch</label><input id="ig-branch" value="${esc(gh.branch || 'main')}"></div>
+        <div class="field"><label for="ig-path">File</label><input id="ig-path" value="${esc(gh.path || 'intake.json')}"></div>
+        <div class="field" style="grid-column:1/-1"><label for="ig-token">Token</label><input id="ig-token" type="password" value="${esc(gh.token)}" autocomplete="off" placeholder="github_pat_…"></div>
+      </div>
+      <div class="row mt"><button class="btn sm primary" type="button" data-act="i-gh-save">Save settings</button><button class="btn sm" type="button" data-act="i-sync" ${gh.token && gh.repo ? '' : 'disabled'}>Sync now</button>${gh.token ? '<button class="btn sm danger" type="button" data-act="i-gh-forget">Forget token</button>' : ''}</div>
+      <p class="tiny muted mt">${I.lastSync ? 'Last synced ' + esc(new Date(I.lastSync).toLocaleString()) : 'Never synced.'}</p>
+      <hr class="sep">
+      <div class="row"><button class="btn sm" type="button" data-act="i-export-json">Download JSON</button><button class="btn sm" type="button" data-act="i-export-csv">Download CSV</button><label class="btn sm" for="i-import">Import JSON<input id="i-import" type="file" accept="application/json,.json" class="sr-only"></label><button class="btn sm danger" type="button" data-act="i-clear">Erase all entries</button></div>`;
+  }
+
+  function readEditor() {
+    const day = {}; for (const m of METRICS) { const v = num($(`#i-${m.k}`).value); if (v != null) day[m.k] = v; }
+    const notes = $('#i-notes').value.trim(); if (notes) day.notes = notes;
+    return day;
+  }
+  function mergeIntake(remote) {
+    if (!remote || typeof remote !== 'object') return 0; let changed = 0;
+    const rd = remote.days || {};
+    for (const k of Object.keys(rd)) { const a = I.days[k], b = rd[k]; if (!b || typeof b !== 'object') continue; if (!a || (b.updated || '') > (a.updated || '')) { I.days[k] = b; changed++; } }
+    if (remote.targets && (remote.targetsUpdated || '') > (I.targetsUpdated || '')) { I.targets = Object.assign({}, DEFAULT_TARGETS, remote.targets); I.targetsUpdated = remote.targetsUpdated; changed++; }
+    return changed;
+  }
+  function exportIntake() { return { version: 1, exported: new Date().toISOString(), targets: I.targets, targetsUpdated: I.targetsUpdated || null, days: I.days }; }
+  function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); }
+  function intakeCsv() { const keys = Object.keys(I.days).sort(); const q = (s) => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"'; return ['date,calcium_mg,water_l,sodium_mg,oxalate_mg,notes'].concat(keys.map((k) => { const d = I.days[k]; if (d.deleted) return null; return [k, d.calcium, d.water, d.sodium, d.oxalate, q(d.notes)].map((x) => (x == null ? '' : x)).join(','); }).filter(Boolean)).join('\n') + '\n'; }
+
+  async function syncIntake() {
+    const gh = lsGet(INTAKE_GH_KEY, null); if (!gh || !gh.token || !gh.repo) { toast('Save the private repository settings first'); return; }
+    const btn = $('[data-act="i-sync"]'); btn.disabled = true; btn.textContent = 'Syncing…';
+    try {
+      let sha = null, remote = null;
+      try { const file = await ghFetch(gh, `contents/${gh.path}?ref=${encodeURIComponent(gh.branch || 'main')}`); sha = file.sha; remote = JSON.parse(b64decode(file.content)); }
+      catch (e) { if (!/404/.test(e.message)) throw e; }
+      const pulled = remote ? mergeIntake(remote) : 0;
+      const out = JSON.stringify(exportIntake(), null, 2);
+      const same = remote && JSON.stringify(remote.days) === JSON.stringify(I.days) && JSON.stringify(remote.targets) === JSON.stringify(I.targets);
+      if (!same) await ghFetch(gh, `contents/${gh.path}`, { method: 'PUT', body: JSON.stringify(Object.assign({ message: 'Update intake log ' + todayIso(), content: b64encode(out), branch: gh.branch || 'main' }, sha ? { sha } : {})) });
+      I.lastSync = new Date().toISOString(); saveIntake(); paintIntake();
+      toast(same ? 'Already in sync' : `Synced (${pulled} day${pulled === 1 ? '' : 's'} pulled)`);
+    } catch (e) { console.error(e); alert('Sync failed: ' + e.message + '\n\nCheck that the repository exists, the token has Contents read/write on it, and the branch name is right.'); }
+    finally { btn.disabled = false; btn.textContent = 'Sync now'; }
+  }
+
+  function bindIntake(v) {
+    v.addEventListener('click', (e) => {
+      const cell = e.target.closest('[data-day]'); if (cell) { intakeUI.selected = cell.dataset.day; paintCalendar(); paintEditor(); return; }
+      const nav = e.target.closest('[data-cal]'); if (nav) { const n = +nav.dataset.cal; if (n === 0) { const t = new Date(); intakeUI.month = new Date(t.getFullYear(), t.getMonth(), 1); intakeUI.selected = todayIso(); } else intakeUI.month = new Date(intakeUI.month.getFullYear(), intakeUI.month.getMonth() + n, 1); paintCalendar(); paintEditor(); paintStats(); return; }
+      const btn = e.target.closest('[data-act]'); if (!btn) return; const act = btn.dataset.act;
+      if (act === 'i-save') { const day = readEditor(); if (!Object.keys(day).length) { toast('Enter at least one value'); return; } day.updated = new Date().toISOString(); I.days[intakeUI.selected] = day; saveIntake(); paintIntake(); toast('Saved ' + intakeUI.selected); }
+      else if (act === 'i-delete') { if (confirm('Delete the entry for ' + intakeUI.selected + '?')) { delete I.days[intakeUI.selected]; saveIntake(); paintIntake(); } }
+      else if (act === 'i-targets-save') { const t = JSON.parse(JSON.stringify(I.targets)); $$('[data-t]', v).forEach((inp) => { const val = num(inp.value); if (val == null) return; const [k, i] = inp.dataset.t.split('.'); if (i != null) t[k][+i] = val; else t[k] = val; }); I.targets = t; I.targetsUpdated = new Date().toISOString(); saveIntake(); paintIntake(); toast('Targets saved'); }
+      else if (act === 'i-targets-reset') { I.targets = JSON.parse(JSON.stringify(DEFAULT_TARGETS)); I.targetsUpdated = new Date().toISOString(); saveIntake(); paintIntake(); }
+      else if (act === 'i-gh-save') { lsSet(INTAKE_GH_KEY, { owner: $('#ig-owner').value.trim(), repo: $('#ig-repo').value.trim(), branch: $('#ig-branch').value.trim() || 'main', path: $('#ig-path').value.trim() || 'intake.json', token: $('#ig-token').value.trim() }); toast('Sync settings saved in this browser'); paintSync(); }
+      else if (act === 'i-gh-forget') { try { localStorage.removeItem(INTAKE_GH_KEY); } catch (err) { /* ignore */ } paintSync(); }
+      else if (act === 'i-sync') syncIntake();
+      else if (act === 'i-export-json') download('oxalate-intake-' + todayIso() + '.json', JSON.stringify(exportIntake(), null, 2), 'application/json');
+      else if (act === 'i-export-csv') download('oxalate-intake-' + todayIso() + '.csv', intakeCsv(), 'text/csv');
+      else if (act === 'i-clear') { if (confirm('Erase every intake entry stored in this browser? (A synced copy in your private repository is not touched.)')) { I.days = {}; saveIntake(); paintIntake(); } }
+    });
+    v.addEventListener('change', (e) => {
+      if (e.target.id === 'i-date' && e.target.value) { intakeUI.selected = e.target.value; const d = fromIso(e.target.value); intakeUI.month = new Date(d.getFullYear(), d.getMonth(), 1); paintCalendar(); paintEditor(); }
+      if (e.target.id === 'i-import' && e.target.files[0]) { const r = new FileReader(); r.onload = () => { try { const n = mergeIntake(JSON.parse(r.result)); saveIntake(); paintIntake(); toast(`Imported ${n} day${n === 1 ? '' : 's'}`); } catch (err) { alert('Could not read that file: ' + err.message); } }; r.readAsText(e.target.files[0]); e.target.value = ''; }
+    });
+    v.addEventListener('input', (e) => { const m = e.target.dataset.m; if (m && m !== 'notes') e.target.className = 'st-' + metricStatus(m, num(e.target.value)); });
+    v.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.dataset.m) { e.preventDefault(); $('[data-act="i-save"]', v).click(); } });
   }
 
   // ------------------------------------------------------------------ sources

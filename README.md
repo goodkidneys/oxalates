@@ -5,6 +5,15 @@ curated foods and the full 433-row Harvard Nov 2023 table, low-oxalate recipes, 
 that computes oxalate and nutrition totals. No build step, no framework, no server: plain HTML, CSS
 and JavaScript served by GitHub Pages.
 
+## Daily intake tracker
+
+The *Intake* tab logs calcium, fluids, sodium and optionally oxalate per day on a calendar, with
+targets, averages and a 30-day trend. Entries are stored in the browser (localStorage). To keep them
+across devices, create a **private** GitHub repository and a fine-grained token limited to it with
+*Contents: read and write*; enter both under *Sync, backup and restore* on the Intake page. Sync
+merges both sides day by day (newest edit wins) into `intake.json` in that private repo. JSON and
+CSV export/import are also available. Nothing about intake is ever written to this public repo.
+
 ## Set up hosting (one time)
 
 1. Merge this branch into `main` (or push it there).
