@@ -277,7 +277,10 @@ details .body { padding-top: 0.5rem; }
 .intake-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
 .intake-grid > * { min-width: 0; }
 .intake-grid .card { min-width: 0; overflow: hidden; }
-@media (min-width: 900px) { .intake-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); align-items: start; } }
+@media (min-width: 900px) {
+  .intake-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-areas: "cal editor" "cal stats" "trend settings"; align-items: start; }
+  #i-cal { grid-area: cal; } #i-editor { grid-area: editor; } #i-stats { grid-area: stats; } #i-trend { grid-area: trend; } #i-settings { grid-area: settings; }
+}
 .cal-head { margin-bottom: 0.5rem; flex-wrap: nowrap; }
 .cal-head h3 { min-width: 0; font-size: 0.95rem; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
@@ -308,4 +311,3 @@ input.st-met { border-color: var(--low-fg); } input.st-near { border-color: var(
 .trend .bar { fill: var(--accent); }
 .trend .bar.near { fill: var(--mod-fg); } .trend .bar.off { fill: var(--high-fg); }
 .trend .bar:hover { opacity: 0.8; }
-@media (min-width: 900px) { .intake-side { position: sticky; top: calc(var(--header-h) + 52px); } }

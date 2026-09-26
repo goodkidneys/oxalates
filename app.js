@@ -775,17 +775,13 @@
         <div class="row"><h1 class="grow">Daily intake</h1><a class="btn sm" href="#/guide">Why these targets?</a></div>
         <p class="subtitle">Log calcium, fluids, sodium and (optionally) oxalate for each day. Entries are stored in this browser; use Sync to keep a copy in a private GitHub repository and share it between devices.</p>
         <div class="intake-grid">
-          <div class="stack">
-            <div class="card" id="i-cal"></div>
-            <div class="card" id="i-trend"></div>
-          </div>
-          <div class="stack intake-side">
-            <div class="card" id="i-editor"></div>
-            <div class="card" id="i-stats"></div>
-            <div class="card">
-              <details><summary>Targets</summary><div class="body" id="i-targets"></div></details>
-              <details class="mt"><summary>Sync, backup and restore</summary><div class="body" id="i-sync"></div></details>
-            </div>
+          <div class="card" id="i-cal"></div>
+          <div class="card" id="i-editor"></div>
+          <div class="card" id="i-stats"></div>
+          <div class="card" id="i-trend"></div>
+          <div class="card" id="i-settings">
+            <details><summary>Targets</summary><div class="body" id="i-targets"></div></details>
+            <details class="mt"><summary>Sync, backup and restore</summary><div class="body" id="i-sync"></div></details>
           </div>
         </div>`;
       bindIntake(v);
